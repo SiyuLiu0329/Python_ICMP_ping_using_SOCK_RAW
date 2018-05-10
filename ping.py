@@ -14,6 +14,9 @@ CODE = 0
 IP_PROTOCOL = 1 # ICMP
 
 IDX_TYPE = 20
+MAX_TTL = 64
+MAX_ATTEMPT = 2
+TIME_OUT = 1
 
 def create_socket(ttl):
     try:
@@ -67,10 +70,9 @@ def send_one_ping(ttl, dest, data, seq):
 
     try:
         s.sendto(packet, (dest, 1))
-        s.settimeout(3)
+        s.settimeout(TIME_OUT)
         rData, _ = s.recvfrom(4096)
     except socket.timeout:
-        print("Timed out, retrying... (seq={}, ttl={})".format(seq, ttl))
         rData = None
 
     after = datetime.datetime.now()
@@ -78,17 +80,15 @@ def send_one_ping(ttl, dest, data, seq):
     return rData, ping
 
 def analyse_response(rData, ping):
-    print("ping: {}ms".format(ping))
+    print("  Ping: {}ms".format(ping))
     ICMP_type = rData[IDX_TYPE]
     source_ip_bytes = rData[12: 16]
-    dest_ip_bytes = rData[16: 20]
     source_ip_str_rep = ip_from_bytes(source_ip_bytes)
-    dest_ip_str_rep = ip_from_bytes(dest_ip_bytes)
-    print(source_ip_str_rep, dest_ip_str_rep)
+    print("  Responder: {}".format(source_ip_str_rep))
     if ICMP_type == 0:
-        print("Destination reached.")
+        print("  Message: destination reached.")
     else:
-        print("Ttl exceeded.")
+        print("  Message: ttl exceeded.")
 
     print("\n")
     return ICMP_type == 0
@@ -99,6 +99,48 @@ def ip_from_bytes(b):
         ip += str(byte) + "."
     return ip[:-1] # drop the last dot
 
+def traceroute(domain, data):
+    try:
+        dest = socket.gethostbyname(domain)
+    except socket.gaierror:
+        print("Not a valud hostname, exiting...")
+        sys.exit()
+
+    print("MAX_TTL={}\n".format(MAX_TTL))
+
+    rData = None
+    reached = False
+    i = 1
+    n_attempt = 1
+
+    while rData == None or reached == False:
+        if n_attempt == 1:
+            print("{} Sending ping... (domain='{}', ip={}, seq={}, ttl={})".format(i , domain, dest, i, i))
+        
+        rData, ping = send_one_ping(i, dest, data, i)
+        if rData == None:
+            # if timed out, try again
+            print("  Timed out, retrying({}/{})... (seq={}, ttl={})".format(n_attempt, MAX_ATTEMPT, i, i))
+            n_attempt += 1
+
+            if n_attempt > MAX_ATTEMPT:
+                print("  MAX_ATTEMPT reached, skipping...\n")
+                i += 1
+                n_attempt = 1
+            continue 
+
+        else:
+            n_attempt = 1 # recovered, reset number of attempts
+
+        reached = analyse_response(rData, ping)
+        if not reached:
+            i += 1
+
+        if i > MAX_TTL:
+            print("Max ttl reached, terminating...")
+            break
+
+    print("Total number of hops: {}".format(i))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a ping test.")
@@ -107,26 +149,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     domain = args.domain
     data = args.data
-    dest = socket.gethostbyname(domain)
-    print("Sending IMCP packet to '{}', IP addr: {}...".format(domain, dest))
-
-    rData = None
-    reached = False
-    i = 1
-    while rData == None or reached == False:
-        print("Sending ping... (seq={}, ttl={})".format(i, i))
-        rData, ping = send_one_ping(i, dest, data, i)
-        if rData == None:
-            # if timed out, try again
-            continue 
-
-        reached = analyse_response(rData, ping)
-        if not reached:
-            i += 1
-        
-    
-
-    
-    
-   
-    
+    traceroute(domain, data)
