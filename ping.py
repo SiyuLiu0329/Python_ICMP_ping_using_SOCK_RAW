@@ -13,6 +13,8 @@ CODE = 0
 
 IP_PROTOCOL = 1 # ICMP
 
+IDX_TYPE = 20
+
 def create_socket(ttl):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_RAW, ICMP)
@@ -65,7 +67,7 @@ def send_one_ping(ttl, dest, data, seq):
 
     try:
         s.sendto(packet, (dest, 1))
-        s.settimeout(4)
+        s.settimeout(3)
         rData, _ = s.recvfrom(4096)
     except socket.timeout:
         print("Timed out, retrying... (seq={}, ttl={})".format(seq, ttl))
@@ -75,11 +77,27 @@ def send_one_ping(ttl, dest, data, seq):
     ping = (after - before).total_seconds() * 1000
     return rData, ping
 
-def analyse_response(response):
-    rData, ping = response
-    print("ping: {}ms\n".format(ping))
-    print(rData)
+def analyse_response(rData, ping):
+    print("ping: {}ms".format(ping))
+    ICMP_type = rData[IDX_TYPE]
+    source_ip_bytes = rData[12: 16]
+    dest_ip_bytes = rData[16: 20]
+    source_ip_str_rep = ip_from_bytes(source_ip_bytes)
+    dest_ip_str_rep = ip_from_bytes(dest_ip_bytes)
+    print(source_ip_str_rep, dest_ip_str_rep)
+    if ICMP_type == 0:
+        print("Destination reached.")
+    else:
+        print("Ttl exceeded.")
 
+    print("\n")
+    return ICMP_type == 0
+
+def ip_from_bytes(b):
+    ip = ""
+    for byte in b:
+        ip += str(byte) + "."
+    return ip[:-1] # drop the last dot
 
 
 if __name__ == "__main__":
@@ -92,13 +110,19 @@ if __name__ == "__main__":
     dest = socket.gethostbyname(domain)
     print("Sending IMCP packet to '{}', IP addr: {}...".format(domain, dest))
 
-    for i in range(1, 11):
-        response = None
-        while response == None:
-            print("Sending ping... (seq={}, ttl={})".format(i, i))
-            response = send_one_ping(i, dest, data, i)
-            
-        analyse_response(response)
+    rData = None
+    reached = False
+    i = 1
+    while rData == None or reached == False:
+        print("Sending ping... (seq={}, ttl={})".format(i, i))
+        rData, ping = send_one_ping(i, dest, data, i)
+        if rData == None:
+            # if timed out, try again
+            continue 
+
+        reached = analyse_response(rData, ping)
+        if not reached:
+            i += 1
         
     
 
